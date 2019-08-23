@@ -1,0 +1,139 @@
+model { 
+
+###############################
+# meta-analysis of prevalence #
+###############################
+
+for(test in 1:3) {
+for(i in 1: n_studies_test[test]) {
+	disease[test, i] ~ dbin(prev_study_fitted[test, i] , n_total[test, i])
+	logit(prev_study_fitted[test, i]) <- logit_prev_study_fitted[test, i]
+	logit_prev_study_fitted[test, i] ~ dnorm(logit_prev_sum, invtau_logit_prev_sum)
+		}
+# separate analysis by study
+for(i in 1: n_studies_test[test]) {
+	events_study[test, i] ~ dbin(prev_study[test, i], n_total_study[test, i])
+	logit(prev_study[test, i]) <- m_prev_study[test, i] 
+	m_prev_study[test, i] ~ dnorm(0, 0.01)
+	} 
+}
+
+## Predicted prevalence from the meta-analysis
+predict_meta_logit_prev ~ dnorm(logit_prev_sum, invtau_logit_prev_sum)
+predict_prev_meta <- exp(predict_meta_logit_prev)/(1 + exp(predict_meta_logit_prev))
+
+# meta-analysis of prevalence	
+# priors for the logit-prevalence
+logit_prev_sum ~ dnorm(0 , 0.01)
+prev_sum <- exp(logit_prev_sum)/(1 + exp(logit_prev_sum))
+invtau_logit_prev_sum <- (1/tau_logit_prev_sum)*(1/tau_logit_prev_sum)
+tau_logit_prev_sum ~ dunif(0.01, 2)
+
+#####################################
+# meta-analysis of test perfromance #
+#####################################
+
+for(test in 1:3) {
+for(i in 1: n_studies_test[test]) {
+	tp[test, i] ~ dbin(fitted_sens_study[test, i], n1[test, i]) 
+	fp[test, i] ~ dbin(fitted_fp_study[test, i], n2[test, i]) 
+	logit(fitted_sens_study[test, i]) <- m_intercept[test, i, 1]
+	logit(fitted_fp_study[test, i]) <- m_intercept[test, i, 2]
+	fitted_spec_study[test, i] <- 1 - fitted_fp_study[test, i] 
+	m_intercept[test, i, 1:2] ~ dmnorm(intercept[test, 1:2], sigma.inv[test, 1:2, 1:2])	
+	} 
+# priors for the elements of the covariance matrix 
+	sigma.inv[test, 1:2, 1:2] <- inverse(sigma[test, 1:2, 1:2])
+	sigma[test, 1, 1] <- sigmaAlpha[test]*sigmaAlpha[test] 
+	sigma[test, 1, 2] <- sigmaAlpha[test]*sigmaGamma[test]*rho[test] 
+	sigma[test, 2, 1] <- sigma[test, 1, 2]
+	sigma[test, 2, 2] <- sigmaGamma[test]*sigmaGamma[test]
+## priors for intercepts
+## test performance
+intercept[test, 1] ~ dnorm(0, 0.01) 
+intercept[test, 2] ~ dnorm(0, 0.01) 
+sigmaAlpha[test] ~ dunif(0.01, 2)  
+sigmaGamma[test] ~ dunif(0.01, 2)  
+rho[test] ~ dunif(-1, 1)  
+summary_sens[test] <- exp(intercept[test,1])/(1 + exp(intercept[test,1]))
+summary_spec[test] <- 1 - exp(intercept[test,2])/(1 + exp(intercept[test,2]))
+
+## Predicted sensitivity and specificity estimates from the meta-analysis (infinite sample size) 
+	predict_meta[test,1:2] ~ dmnorm(intercept[test,1:2], sigma.inv[test, 1:2, 1:2]) 
+	predict_sens_meta[test] <- exp(predict_meta[test, 1])/(1 + exp(predict_meta[test, 1]))
+	predict_spec_meta[test] <- 1 - exp(predict_meta[test, 2])/(1 + exp(predict_meta[test, 2]))
+	
+###############################################################################################################
+###############################################################################################################
+###############THIS IS THE SECTION IN THE PAPER WHERE WE DRAW R_TP AND R_FP USING R_NEW AND N_NEW##############
+###############################################################################################################
+###############################################################################################################
+
+## Predicted sensitivity and specificity for a real study of k 
+## Using the meta-analysis prediction
+	for(k in 1:number_scenarios) {
+		# first draw the number of events
+		events_obs[test, k] ~ dbin(predict_prev_meta, ss_new[k])
+		events_obs_cor[test,k] <-  events_obs[test,k]  + 5
+		no_events_obs[test, k] <- ss_new[k] - events_obs[test, k] + 5
+		prev_obs[test, k] <- events_obs[test,k]/ss_new[k]
+		tp_obs[test, k] ~ dbin(predict_sens_meta[test], events_obs_cor[test, k]) 
+		tn_obs[test, k] ~ dbin(predict_spec_meta[test], no_events_obs[test, k])
+		sens_obs[test, k] <- tp_obs[test, k]/events_obs_cor[test, k]
+		spec_obs[test, k] <- tn_obs[test, k]/no_events_obs[test, k]
+		}
+
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+###############################################################################################################
+
+## Predicted sensitivity and specificity for a real study
+## using fitted values from the meta-analysis
+
+for(i in 1: n_studies_test[test]) {
+		
+	for(k in 1:number_scenarios) {
+		# first draw the number of events
+		events_study_fitted_obs[test, i, k] ~ dbin(prev_study_fitted[test, i], ss_new[k])
+		events_study_fitted_obs_cor[test, i, k] <- events_study_fitted_obs[test, i, k] + 5  
+		no_events_study_fitted_obs[test, i, k] <- ss_new[k] - events_study_fitted_obs[test, i, k] + 5
+		
+		prev_study_fitted_obs[test, i, k] <- events_study_fitted_obs[test, i, k]/ss_new[k]
+		
+		tp_study_fitted_obs[test,i,k] ~ dbin(fitted_sens_study[test,i], events_study_fitted_obs_cor[test, i, k]) 
+		tn_study_fitted_obs[test,i,k] ~ dbin(fitted_spec_study[test,i], no_events_study_fitted_obs[test, i, k])
+		sens_study_fitted_obs[test,i,k] <- tp_study_fitted_obs[test,i,k]/events_study_fitted_obs_cor[test, i, k]
+		spec_study_fitted_obs[test,i,k] <- tn_study_fitted_obs[test,i,k]/no_events_study_fitted_obs[test, i, k]
+			}
+		}
+
+# separate analysis by study
+for(j in 1: n_studies_test[test]) { 
+
+	tp_study[test, j] ~ dbin(tpr_study[test, j], n1_study[test, j])
+	fp_study[test, j] ~ dbin(fpr_study[test,j], n2_study[test,j])
+	logit(tpr_study[test,j]) <- m_study[test,j,1] 
+	logit(fpr_study[test,j]) <- m_study[test,j,2] 
+	m_study[test,j,1] ~ dnorm(0, 0.01)
+	m_study[test,j,2] ~ dnorm(0, 0.01)
+	sens_study[test,j] <- tpr_study[test,j]
+	spec_study[test,j] <- 1 - fpr_study[test,j]
+
+		for(k in 1:number_scenarios) {
+		# first draw the number of events
+		events_study_obs[test, j, k] ~ dbin(prev_study[test, j], ss_new[k])
+		events_study_obs_cor[test, j, k] <- events_study_obs[test, j, k] + 5
+		no_events_study_obs[test, j, k] <- ss_new[k] - events_study_obs[test, j, k] + 5
+		
+		prev_study_obs[test, j, k] <- events_study_obs[test, j, k]/ss_new[k]
+		
+		tp_study_obs[test,j,k] ~ dbin(sens_study[test,j], events_study_obs_cor[test, j, k]) 
+		tn_study_obs[test,j,k] ~ dbin(spec_study[test,j], no_events_study_obs[test, j, k])
+		sens_study_obs[test,j,k] <- tp_study_obs[test,j,k]/events_study_obs_cor[test, j, k]
+		spec_study_obs[test,j,k] <- tn_study_obs[test,j,k]/no_events_study_obs[test, j, k]
+		}
+	 } 
+}
+###############################################################################################################
+
